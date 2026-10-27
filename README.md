@@ -10,9 +10,10 @@
 </p>
 
 <p align="center">
-  <img src="docs/idle.png" width="32%" alt="Ready to drop a video">
-  <img src="docs/encoding.png" width="32%" alt="Encoding in progress">
-  <img src="docs/done.png" width="32%" alt="Done, with the output size">
+  <img src="docs/idle.png" width="24%" alt="Ready to drop videos">
+  <img src="docs/queue.png" width="24%" alt="Three videos loaded, pick a destination">
+  <img src="docs/encoding.png" width="24%" alt="Encoding the queue">
+  <img src="docs/done.png" width="24%" alt="Done, with a Back button to pick another destination">
 </p>
 
 ## Download
@@ -25,13 +26,17 @@ Grab **`SendThisVid.exe`** from the [latest release](../../releases/latest) and 
 
 ## How to use
 
-1. Pick a destination under the drop zone (Discord, Email, GitHub, …). Your last choice is remembered.
-2. Drag a video anywhere onto the window, or click the drop zone to browse.
+1. Drag one or more videos anywhere onto the window, or click the drop zone to browse.
+2. Click where it's going (Discord, Email, GitHub, …). Conversion starts right away. For Custom, type the size and click **Convert**.
 3. When it's done, click **Show in folder**. Your file is selected and ready to drag into Discord or wherever.
 
 The result is saved **next to the original** as `yourvideo_<destination>.mp4`. The original is never modified.
 
-You can also drag a video onto `SendThisVid.exe` itself to open the app and start right away with your last destination.
+**Several videos:** they line up in a queue and are converted one after the other to the destination you click. Use **+ Add videos** to add more, **Replace** to start over with other videos, or × to take one out. If one video fails, the others still get converted.
+
+Your videos stay loaded after a conversion, so you can click **← Back** to make a second version (Discord and Email, for example).
+
+You can also drag videos onto `SendThisVid.exe` itself to open the app with them already loaded.
 
 ## Presets
 

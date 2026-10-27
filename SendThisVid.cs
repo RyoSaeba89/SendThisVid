@@ -12,8 +12,8 @@ using System.Threading;
 [assembly: System.Reflection.AssemblyTitle("SendThisVid")]
 [assembly: System.Reflection.AssemblyProduct("SendThisVid")]
 [assembly: System.Reflection.AssemblyDescription("Compress a video to fit Discord, email, GitHub and other upload limits")]
-[assembly: System.Reflection.AssemblyVersion("1.0.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.0.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.1.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.1.0.0")]
 
 class Encoder
 {

@@ -59,7 +59,7 @@
         <Setter.Value>
           <ControlTemplate TargetType="Button">
             <Border x:Name="b" CornerRadius="8" Background="{StaticResource Accent}" Padding="{TemplateBinding Padding}" BorderBrush="White" BorderThickness="0">
-              <ContentPresenter HorizontalAlignment="Center"/>
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="b" Property="Opacity" Value="0.88"/></Trigger>
@@ -109,6 +109,32 @@
                 <Setter TargetName="b" Property="Background" Value="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}"/>
                 <Setter Property="Foreground" Value="White"/>
               </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- × on a queue row -->
+    <Style x:Key="Remove" TargetType="Button">
+      <Setter Property="Width" Value="32"/>
+      <Setter Property="Height" Value="32"/>
+      <Setter Property="Foreground" Value="#9A9AAE"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="ToolTip" Value="Remove"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="b" Margin="4" CornerRadius="5" Background="Transparent" BorderBrush="Transparent" BorderThickness="1">
+              <Path Data="M 0,0 L 8,8 M 8,0 L 0,8" Stroke="{TemplateBinding Foreground}" StrokeThickness="1.4" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="b" Property="Background" Value="#2A2A36"/>
+                <Setter Property="Foreground" Value="White"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="#6366F1"/></Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
@@ -172,8 +198,56 @@
                     Width="24" Height="24" Stretch="None" HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <TextBlock Text="Drop a video here" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,16,0,0"/>
-            <TextBlock Text="or click to browse" Foreground="{StaticResource Sub}" HorizontalAlignment="Center" Margin="0,4,0,0"/>
+            <TextBlock Text="or click to browse · several at once is fine" Foreground="{StaticResource Sub}" HorizontalAlignment="Center" Margin="0,4,0,0"/>
           </StackPanel>
+
+          <!-- Loaded videos: the queue, converted one after the other to the destination clicked below -->
+          <DockPanel x:Name="ReadyView" Margin="18,14,18,14" Visibility="Collapsed">
+            <Grid DockPanel.Dock="Top" Margin="2,0,0,10">
+              <TextBlock x:Name="QueueTitle" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
+              <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="AddBtn" Content="+ Add videos" Style="{StaticResource Ghost}" Padding="12,5"/>
+                <Button x:Name="ReplaceBtn" Content="Replace" Style="{StaticResource Ghost}" Padding="12,5" Margin="6,0,0,0"/>
+              </StackPanel>
+            </Grid>
+            <TextBlock DockPanel.Dock="Bottom" Text="Now pick a destination below" Foreground="{StaticResource Sub}" Margin="2,8,0,0"/>
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
+              <ScrollViewer.Resources>
+                <Style TargetType="ScrollBar">
+                  <Setter Property="Width" Value="6"/>
+                  <Setter Property="MinWidth" Value="6"/>
+                  <Setter Property="Margin" Value="6,0,0,4"/>
+                  <Setter Property="Template">
+                    <Setter.Value>
+                      <ControlTemplate TargetType="ScrollBar">
+                        <Track x:Name="PART_Track" IsDirectionReversed="True">
+                          <Track.Thumb>
+                            <Thumb>
+                              <Thumb.Template>
+                                <ControlTemplate TargetType="Thumb"><Border CornerRadius="3" Background="#3A3A47"/></ControlTemplate>
+                              </Thumb.Template>
+                            </Thumb>
+                          </Track.Thumb>
+                        </Track>
+                      </ControlTemplate>
+                    </Setter.Value>
+                  </Setter>
+                </Style>
+              </ScrollViewer.Resources>
+              <ItemsControl x:Name="QueueList" Focusable="False">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border CornerRadius="6" Background="#1B1B24" Margin="0,0,0,4" Padding="12,0,0,0" ToolTip="{Binding FullName}">
+                      <DockPanel>
+                        <Button DockPanel.Dock="Right" Style="{StaticResource Remove}" AutomationProperties.Name="Remove from queue"/>
+                        <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                      </DockPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+          </DockPanel>
 
           <StackPanel x:Name="WorkView" VerticalAlignment="Center" Margin="36,0" Visibility="Collapsed">
             <TextBlock x:Name="FileName" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
@@ -197,7 +271,6 @@
             <TextBlock x:Name="DoneName" Foreground="{StaticResource Sub}" HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,16,0,0">
               <Button x:Name="ShowBtn" Content="Show in folder" Style="{StaticResource Primary}"/>
-              <Button x:Name="AgainBtn" Content="Convert another" Style="{StaticResource Ghost}" Margin="8,0,0,0"/>
             </StackPanel>
           </StackPanel>
 
@@ -207,16 +280,22 @@
             </Border>
             <TextBlock x:Name="ErrorTitle" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,12,0,0"/>
             <TextBlock x:Name="ErrorText" Foreground="{StaticResource Sub}" TextWrapping="Wrap" TextAlignment="Center" MaxHeight="54" TextTrimming="CharacterEllipsis" Margin="0,4,0,0"/>
-            <Button x:Name="RetryBtn" Content="Try another video" Style="{StaticResource Ghost}" HorizontalAlignment="Center" Margin="0,14,0,0"/>
           </StackPanel>
+
+          <!-- Done/Error: back to the loaded videos -->
+          <Button x:Name="BackBtn" Content="← Back" Style="{StaticResource Ghost}" Padding="12,5" Margin="14" HorizontalAlignment="Left" VerticalAlignment="Top" Visibility="Collapsed"/>
         </Grid>
 
-        <TextBlock Text="DESTINATION" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource Muted}" Margin="0,0,0,6"/>
+        <Grid Margin="0,0,0,6">
+          <TextBlock Text="DESTINATION" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource Muted}"/>
+          <TextBlock x:Name="PresetHint" Text="Import a video first" FontSize="12" Foreground="{StaticResource Muted}" HorizontalAlignment="Right"/>
+        </Grid>
         <UniformGrid x:Name="Presets" Columns="3" Margin="-4,0"/>
         <StackPanel x:Name="CustomRow" Orientation="Horizontal" Margin="0,12,0,0" Visibility="Collapsed">
           <TextBlock Text="Target size" Foreground="{StaticResource Sub}" VerticalAlignment="Center"/>
-          <TextBox x:Name="CustomMB" Width="80" Margin="12,0,8,0" AutomationProperties.Name="Target size in MB"/>
+          <TextBox x:Name="CustomMB" Width="80" Padding="8,3" Margin="12,0,8,0" AutomationProperties.Name="Target size in MB"/>
           <TextBlock Text="MB" Foreground="{StaticResource Sub}" VerticalAlignment="Center"/>
+          <Button x:Name="ConvertBtn" Content="Convert" Style="{StaticResource Primary}" Padding="16,0" Margin="14,0,0,0"/>
         </StackPanel>
 
         <TextBlock Text="Saved next to the original as name_destination.mp4. The original is never touched." Foreground="{StaticResource Muted}" FontSize="12" Margin="2,16,0,0"/>

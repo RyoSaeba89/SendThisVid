@@ -1,8 +1,11 @@
 // SendThisVid UI (WPF, part of .NET Framework). The layout and styles are in Ui.xaml, embedded as a resource.
 using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
@@ -42,11 +45,12 @@ class Ui
     readonly RadioButton[] cards = new RadioButton[Presets.Length];
     Encoder job;
     Thread worker;
+    readonly ObservableCollection<FileInfo> queue = new ObservableCollection<FileInfo>();
     string lastOutput;
 
     T F<T>(string name) { return (T)w.FindName(name); }
 
-    public Ui(string file)
+    public Ui(string[] startFiles)
     {
         using (var s = typeof(Ui).Assembly.GetManifestResourceStream("Ui.xaml")) w = (Window)XamlReader.Load(s);
 
@@ -54,32 +58,40 @@ class Ui
         var style = (Style)w.FindResource("Preset");
         for (int i = 0; i < Presets.Length; i++)
         {
-            cards[i] = new RadioButton { Content = Presets[i].Name, Tag = Presets[i].Detail, Style = style, GroupName = "preset" };
-            cards[i].Checked += (s, e) => F<UIElement>("CustomRow").Visibility = Selected().Suffix == null ? Visibility.Visible : Visibility.Collapsed;
+            var p = Presets[i];
+            cards[i] = new RadioButton { Content = p.Name, Tag = p.Detail, Style = style, GroupName = "preset" };
+            cards[i].Click += (s, e) => Pick(p);
             grid.Children.Add(cards[i]);
         }
 
-        int idx = 0;
-        string custom = "25";
+        var customBox = F<TextBox>("CustomMB");
+        customBox.Text = "25";
         try
         {
             var parts = File.ReadAllText(SettingsFile).Split(';');
-            idx = Math.Max(0, Math.Min(int.Parse(parts[0]), Presets.Length - 1));
-            custom = parts[1];
+            customBox.Text = parts[parts.Length - 1]; // 1.0.0 stored "preset;size", now just the size
         }
         catch (Exception) { } // first run or unreadable settings: defaults
-        F<TextBox>("CustomMB").Text = custom;
-        cards[idx].IsChecked = true;
+        var customPreset = Presets[Presets.Length - 1];
+        F<Button>("ConvertBtn").Click += (s, e) => Start(customPreset);
+        customBox.KeyDown += (s, e) => { if (e.Key == Key.Enter) Start(customPreset); };
 
         F<Button>("MinBtn").Click += (s, e) => w.WindowState = WindowState.Minimized;
         F<Button>("CloseBtn").Click += (s, e) => w.Close();
         F<Button>("CancelBtn").Click += (s, e) => { if (job != null) job.Cancel(); };
         F<Button>("ShowBtn").Click += (s, e) => Process.Start("explorer.exe", "/select,\"" + lastOutput + "\"");
-        F<Button>("AgainBtn").Click += (s, e) => Show("IdleView");
-        F<Button>("RetryBtn").Click += (s, e) => Show("IdleView");
+        F<Button>("BackBtn").Click += (s, e) => Show("ReadyView");
+        F<Button>("AddBtn").Click += (s, e) => Browse(false);
+        F<Button>("ReplaceBtn").Click += (s, e) => Browse(true);
+
+        var list = F<ItemsControl>("QueueList");
+        list.ItemsSource = queue;
+        // The only buttons in the list are the row × buttons
+        list.AddHandler(Button.ClickEvent, (RoutedEventHandler)((s, e) => Remove((FileInfo)((FrameworkElement)e.OriginalSource).DataContext)));
+        queue.CollectionChanged += (s, e) => F<TextBlock>("QueueTitle").Text = queue.Count == 1 ? "1 video" : queue.Count + " videos";
 
         var zone = F<Grid>("Zone");
-        zone.MouseLeftButtonUp += (s, e) => { if (F<UIElement>("IdleView").IsVisible) Browse(); };
+        zone.MouseLeftButtonUp += (s, e) => { if (F<UIElement>("IdleView").IsVisible) Browse(false); };
         w.DragEnter += (s, e) => Hot(job == null && e.Data.GetDataPresent(DataFormats.FileDrop));
         w.DragLeave += (s, e) => Hot(false);
         w.DragOver += (s, e) =>
@@ -91,7 +103,7 @@ class Ui
         {
             Hot(false);
             var files = e.Data.GetData(DataFormats.FileDrop) as string[];
-            if (files != null && files.Length > 0) Start(files[0]);
+            if (files != null) Add(files);
         };
         w.Closing += (s, e) =>
         {
@@ -99,22 +111,55 @@ class Ui
             job.Cancel();
             worker.Join(5000); // let the worker delete the partial output
         };
-        if (file != null) w.Loaded += (s, e) => Start(file);
+        Show("IdleView");
+        Add(startFiles);
     }
 
     public Window Window { get { return w; } }
 
-    Preset Selected()
-    {
-        for (int i = 0; i < cards.Length; i++) if (cards[i].IsChecked == true) return Presets[i];
-        return Presets[0];
-    }
-
     void Show(string view)
     {
-        foreach (var v in new[] { "IdleView", "WorkView", "DoneView", "ErrorView" })
+        foreach (var v in new[] { "IdleView", "ReadyView", "WorkView", "DoneView", "ErrorView" })
             F<UIElement>(v).Visibility = v == view ? Visibility.Visible : Visibility.Collapsed;
+        bool picking = view == "ReadyView", browsing = picking || view == "IdleView";
         F<Grid>("Zone").Cursor = view == "IdleView" ? Cursors.Hand : null;
+        // Destinations are clickable only once a video is loaded; the picked one stays lit while encoding
+        foreach (var c in cards)
+        {
+            c.IsEnabled = picking;
+            if (browsing) c.IsChecked = false;
+        }
+        F<UIElement>("BackBtn").Visibility = view == "DoneView" || view == "ErrorView" ? Visibility.Visible : Visibility.Collapsed;
+        F<UIElement>("PresetHint").Visibility = view == "IdleView" ? Visibility.Visible : Visibility.Collapsed;
+        if (browsing) F<UIElement>("CustomRow").Visibility = Visibility.Collapsed;
+        F<TextBox>("CustomMB").IsEnabled = picking;
+    }
+
+    void Add(IEnumerable<string> paths)
+    {
+        if (job != null) return;
+        foreach (var path in paths)
+        {
+            var f = new FileInfo(path);
+            if (f.Exists && !queue.Any(q => q.FullName.Equals(f.FullName, StringComparison.OrdinalIgnoreCase))) queue.Add(f);
+        }
+        Show(queue.Count > 0 ? "ReadyView" : "IdleView");
+    }
+
+    void Remove(FileInfo f)
+    {
+        queue.Remove(f);
+        if (queue.Count == 0) Show("IdleView");
+    }
+
+    void Pick(Preset p)
+    {
+        if (p.Suffix != null) { Start(p); return; }
+        // Custom needs a size first: show the field, Convert or Enter starts
+        F<UIElement>("CustomRow").Visibility = Visibility.Visible;
+        var box = F<TextBox>("CustomMB");
+        box.Focus();
+        box.SelectAll();
     }
 
     void Hot(bool on)
@@ -125,10 +170,12 @@ class Ui
         F<Border>("ZoneBg").Background = on ? HotFill : IdleFill;
     }
 
-    void Browse()
+    void Browse(bool replace)
     {
-        var d = new Microsoft.Win32.OpenFileDialog { Filter = "Videos|*.mp4;*.mov;*.mkv;*.avi;*.webm;*.m4v;*.wmv;*.flv;*.3gp;*.ts;*.mts;*.gif|All files|*.*" };
-        if (d.ShowDialog(w) == true) Start(d.FileName);
+        var d = new Microsoft.Win32.OpenFileDialog { Multiselect = true, Filter = "Videos|*.mp4;*.mov;*.mkv;*.avi;*.webm;*.m4v;*.wmv;*.flv;*.3gp;*.ts;*.mts;*.gif|All files|*.*" };
+        if (d.ShowDialog(w) != true) return;
+        if (replace) queue.Clear();
+        Add(d.FileNames);
     }
 
     void SetProgress(double f)
@@ -139,10 +186,9 @@ class Ui
             new DoubleAnimation(F<Grid>("BarTrack").ActualWidth * f, TimeSpan.FromMilliseconds(250)));
     }
 
-    void Start(string file)
+    void Start(Preset p)
     {
-        if (job != null) return;
-        var p = Selected();
+        if (job != null || queue.Count == 0) return;
         var customBox = F<TextBox>("CustomMB");
         double mb = p.TargetMB;
         if (p.Suffix == null && (!double.TryParse(customBox.Text.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out mb) || mb < 1))
@@ -155,50 +201,69 @@ class Ui
         try
         {
             Directory.CreateDirectory(Encoder.DataDir);
-            File.WriteAllText(SettingsFile, Array.IndexOf(Presets, p) + ";" + customBox.Text);
+            File.WriteAllText(SettingsFile, customBox.Text);
         }
-        catch (Exception) { } // remembering the preset is best effort
+        catch (Exception) { } // remembering the custom size is best effort
 
-        foreach (var c in cards) c.IsEnabled = false;
-        customBox.IsEnabled = false;
-        F<TextBlock>("FileName").Text = Path.GetFileName(file);
-        F<TextBlock>("Status").Text = "Starting…";
-        F<Border>("Bar").BeginAnimation(FrameworkElement.WidthProperty, null);
-        F<Border>("Bar").Width = 0;
-        F<TextBlock>("Percent").Text = "0%";
         Show("WorkView");
 
         var j = job = new Encoder();
+        var files = queue.Select(f => f.FullName).ToArray();
         j.Status = msg => w.Dispatcher.BeginInvoke((Action)(() => F<TextBlock>("Status").Text = msg));
         j.Progress = f => w.Dispatcher.BeginInvoke((Action)(() => SetProgress(f)));
         worker = new Thread(() =>
         {
-            string result = null;
+            var outputs = new List<string>();
+            var failed = new List<string>();
             Exception err = null;
-            try { result = j.Encode(file, mb, suffix); } catch (Exception ex) { err = ex; }
-            w.Dispatcher.BeginInvoke((Action)(() => Done(result, err, mb)));
+            for (int i = 0; i < files.Length; i++)
+            {
+                int n = i;
+                w.Dispatcher.BeginInvoke((Action)(() => Begin(files[n], n, files.Length)));
+                try { outputs.Add(j.Encode(files[i], mb, suffix)); }
+                catch (OperationCanceledException ex) { err = ex; break; }
+                catch (Exception ex) { err = ex; failed.Add(Path.GetFileName(files[i])); } // one bad video doesn't stop the rest
+            }
+            w.Dispatcher.BeginInvoke((Action)(() => Done(outputs, failed, err, mb, files.Length)));
         }) { IsBackground = true };
         worker.Start();
     }
 
-    void Done(string output, Exception err, double mb)
+    void Begin(string file, int i, int n)
+    {
+        F<TextBlock>("FileName").Text = (n > 1 ? (i + 1) + "/" + n + " · " : "") + Path.GetFileName(file);
+        F<TextBlock>("Status").Text = "Starting…";
+        F<Border>("Bar").BeginAnimation(FrameworkElement.WidthProperty, null);
+        F<Border>("Bar").Width = 0;
+        F<TextBlock>("Percent").Text = "0%";
+    }
+
+    void Done(List<string> outputs, List<string> failed, Exception err, double mb, int n)
     {
         job = null;
-        foreach (var c in cards) c.IsEnabled = true;
-        F<TextBox>("CustomMB").IsEnabled = true;
-        if (err is OperationCanceledException) { Show("IdleView"); return; }
-        if (err != null)
+        if (err is OperationCanceledException) { Show("ReadyView"); return; } // same videos, pick again
+        if (outputs.Count == 0)
         {
             var lines = err.Message.Split(new[] { '\n' }, 2);
-            F<TextBlock>("ErrorTitle").Text = lines[0];
-            F<TextBlock>("ErrorText").Text = lines.Length > 1 ? lines[1].Trim() : "";
+            F<TextBlock>("ErrorTitle").Text = n > 1 ? "None of the " + n + " videos could be converted" : lines[0];
+            F<TextBlock>("ErrorText").Text = n > 1 ? lines[0] : lines.Length > 1 ? lines[1].Trim() : "";
             Show("ErrorView");
             return;
         }
-        double size = new FileInfo(output).Length / 1e6;
-        F<TextBlock>("DoneSize").Text = string.Format(CultureInfo.InvariantCulture, "{0:0.0} MB", size) + (size > mb ? "  · above target" : " · ready to send");
-        F<TextBlock>("DoneName").Text = Path.GetFileName(output);
-        lastOutput = output;
+        lastOutput = outputs[outputs.Count - 1];
+        int over = outputs.Count(o => new FileInfo(o).Length / 1e6 > mb);
+        if (n == 1)
+        {
+            double size = new FileInfo(lastOutput).Length / 1e6;
+            F<TextBlock>("DoneSize").Text = string.Format(CultureInfo.InvariantCulture, "{0:0.0} MB", size) + (over > 0 ? "  · above target" : " · ready to send");
+            F<TextBlock>("DoneName").Text = Path.GetFileName(lastOutput);
+        }
+        else
+        {
+            F<TextBlock>("DoneSize").Text = failed.Count == 0 ? n + " videos ready" : outputs.Count + " of " + n + " ready";
+            F<TextBlock>("DoneName").Text = failed.Count > 0 ? "Failed: " + string.Join(", ", failed)
+                : over > 0 ? over + " above target" : "Saved next to the originals";
+        }
         Show("DoneView");
     }
 }
@@ -209,11 +274,12 @@ static class Program
     static int Main(string[] args)
     {
         // Headless mode (used by test.ps1): SendThisVid.exe <video> <targetMB>
-        if (args.Length == 2)
+        // Two videos dropped on the exe are also 2 args: headless only when the second is a number
+        double mb;
+        if (args.Length == 2 && double.TryParse(args[1], NumberStyles.Float, CultureInfo.InvariantCulture, out mb))
         {
             try
             {
-                var mb = double.Parse(args[1], CultureInfo.InvariantCulture);
                 var e = new Encoder { Status = Console.Error.WriteLine };
                 var output = e.Encode(args[0], mb, args[1] + "mb");
                 Console.WriteLine(output);
@@ -221,6 +287,6 @@ static class Program
             }
             catch (Exception ex) { Console.Error.WriteLine(ex.Message); return 1; }
         }
-        return new Application().Run(new Ui(args.Length == 1 ? args[0] : null).Window);
+        return new Application().Run(new Ui(args).Window);
     }
 }
